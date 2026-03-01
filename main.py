@@ -1,35 +1,35 @@
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from playwright.sync_api import sync_playwright
+import os
+import uuid
 
 app = FastAPI()
 
-# ---------------------------
+# -----------------------
+# DATA MODEL
+# -----------------------
+
+class RiskInput(BaseModel):
+    context: str
+
+
+# -----------------------
 # SCORING LOGIC
-# ---------------------------
+# -----------------------
 
-def calculate_score(payload):
+def calculate_score(context: str):
     score = 0
-    context = payload.get("context", "").lower()
+    context = context.lower()
 
-    # Complaints escalation risk
     if "complaint" in context:
         score += 15
     if "ignored" in context or "delay" in context:
         score += 10
-
-    # Documentation weakness
-    if "verbal" in context or "no record" in context:
+    if "acnc" in context or "ndis" in context:
         score += 15
-
-    # Oversight failure
-    if "board unaware" in context or "not escalated" in context:
-        score += 20
-
-    # Regulatory exposure
-    if "ndis" in context or "acnc" in context:
-        score += 15
-
-    # Stakeholder harm severity
-    if "harm" in context or "injury" in context:
+    if "harm" in context:
         score += 20
 
     return min(score, 100)
@@ -43,9 +43,10 @@ def exposure_level(score):
     else:
         return "High"
 
-# ---------------------------
+
+# -----------------------
 # ROUTES
-# ---------------------------
+# -----------------------
 
 @app.get("/ping")
 def ping():
@@ -53,17 +54,43 @@ def ping():
 
 
 @app.post("/analyze-risk")
-def analyze_risk(payload: dict):
+def analyze_risk(payload: RiskInput):
 
-    score = calculate_score(payload)
+    score = calculate_score(payload.context)
     level = exposure_level(score)
 
     return {
-        "escalationPathways": "Complaint → Internal handling → Escalation delay → Board visibility risk → Regulatory exposure.",
-        "foreseeableHarmIndicators": "Delayed complaint handling, documentation weakness, oversight diffusion.",
-        "governanceBlindSpots": "Escalation clarity, board reporting cadence, delegation visibility.",
-        "liabilitySignals": "Failure to document decisions, escalation delay risk, potential regulatory notification trigger.",
+        "context": payload.context,
         "structuralFragilityScore": score,
-        "exposureLevel": level,
-        "mitigationRecommendations": "Formalise escalation thresholds, implement documented reporting cadence, update risk register."
+        "exposureLevel": level
     }
+
+
+@app.post("/generate-report")
+def generate_report(payload: RiskInput):
+
+    score = calculate_score(payload.context)
+    level = exposure_level(score)
+
+    html_content = f"""
+    <html>
+        <body>
+            <h1>Governance Exposure Stress-Test Report</h1>
+            <p><strong>Context:</strong> {payload.context}</p>
+            <p><strong>Structural Fragility Score:</strong> {score}</p>
+            <p><strong>Exposure Level:</strong> {level}</p>
+        </body>
+    </html>
+    """
+
+    file_name = f"report_{uuid.uuid4()}.pdf"
+    file_path = f"/tmp/{file_name}"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        page = browser.new_page()
+        page.set_content(html_content)
+        page.pdf(path=file_path)
+        browser.close()
+
+    return FileResponse(file_path, media_type="application/pdf", filename="Governance_Report.pdf")
